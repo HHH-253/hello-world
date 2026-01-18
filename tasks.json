@@ -5,7 +5,9 @@
     "priority": "medium",
     "status": "pending",
     "created_at": "2026-01-17T21:09:11.302384",
-    "completed_at": null
+    "completed_at": null,
+    "category": "",
+    "due_date": ""
   },
   {
     "id": 2,
@@ -13,7 +15,9 @@
     "priority": "medium",
     "status": "pending",
     "created_at": "2026-01-17T21:16:06.886832",
-    "completed_at": null
+    "completed_at": null,
+    "category": "",
+    "due_date": ""
   },
   {
     "id": 3,
@@ -21,7 +25,9 @@
     "priority": "high",
     "status": "pending",
     "created_at": "2026-01-17T21:23:47.479993",
-    "completed_at": null
+    "completed_at": null,
+    "category": "",
+    "due_date": ""
   },
   {
     "id": 4,
@@ -29,6 +35,18 @@
     "priority": "low",
     "status": "pending",
     "created_at": "2026-01-17T21:26:11.138091",
-    "completed_at": null
+    "completed_at": null,
+    "category": "",
+    "due_date": ""
+  },
+  {
+    "id": 5,
+    "description": "practise english writing in academic style",
+    "priority": "medium",
+    "status": "pending",
+    "created_at": "2026-01-18T12:18:22.584120",
+    "completed_at": null,
+    "category": "skill",
+    "due_date": "2026-01-20"
   }
 ]
