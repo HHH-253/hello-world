@@ -1,141 +1,171 @@
-#!/usr/bin/env python3
-"""
-Task Manager - A simple command-line task management application
-"""
-
 import json
 import os
+import tempfile
 from datetime import datetime
 from typing import List, Dict, Optional
 
-
-
 class TaskManager:
-    """Manages tasks with persistence to JSON file"""
-    
     def __init__(self, data_file: str = "tasks.json"):
         self.data_file = data_file
-        self.tasks = self.load_tasks()
+        self.tasks: List[Dict] = self.load_tasks()
     
-    def load_tasks(self) -> List[Dict]:
+def load_tasks(self) -> List[Dict]:
         """Load tasks from JSON file"""
         # NEW FEATURE: Added backward compatibility for tasks missing category/due_date fields
-        if os.path.exists(self.data_file):
-            try:
-                with open(self.data_file, 'r') as f:
-                    tasks = json.load(f)
-                    # Ensure all tasks have category and due_date fields for backward compatibility
-                    for task in tasks:
-                        if "category" not in task:
-                            task["category"] = ""
-                        if "due_date" not in task:
-                            task["due_date"] = ""
-                    return tasks
-            except (json.JSONDecodeError, IOError):
-                return []
-        return []
-    
-    
+        if not os.path.exists(self.data_file):
+            return []
+        try:
+            with open(self.data_file, "r") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return []
+
+        # Be conservative: only accept a top-level list of task dicts
+        if not isinstance(data, list):
+            return []
+
+        cleaned: List[Dict] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            # Ensure required keys exist with sensible defaults
+            item.setdefault("id", None)
+            item.setdefault("description", "")
+            item.setdefault("priority", "medium")
+            item.setdefault("status", "pending")
+            item.setdefault("created_at", item.get("created_at", datetime.now().isoformat()))
+            item.setdefault("completed_at", None)
+            # Optional fields: keep as empty string when absent for backward compat
+            item.setdefault("category", "")
+            item.setdefault("due_date", "")
+            cleaned.append(item)
+        return cleaned
+
     def save_tasks(self):
-        """Save tasks to JSON file"""
-        with open(self.data_file, 'w') as f:
-            json.dump(self.tasks, f, indent=2)
-    
-    def add_task(self, description: str, priority: str = "medium", category: str = "", due_date: str = "") -> int:
-        """Add a new task"""
-        # NEW FEATURE: Added category and due_date parameters to tasks
+        # Write atomically to avoid corrupting the data file
+        dirpath = os.path.dirname(self.data_file) or "."
+        tmpname = None
+        try:
+            with tempfile.NamedTemporaryFile("w", delete=False, dir=dirpath) as tmp:
+                tmpname = tmp.name
+                json.dump(self.tasks, tmp, indent=2)
+            # Atomic replace
+            os.replace(tmpname, self.data_file)
+        finally:
+            # In case of exceptions, ensure leftover temp file is removed
+            if tmpname and os.path.exists(tmpname):
+                try:
+                    os.remove(tmpname)
+                except Exception:
+                    pass
+
+    def _normalize_due_date(self, due_date: str) -> str:
+        """Validate and normalize due_date in YYYY-MM-DD or return empty string for blank."""
+        if not due_date:
+            return ""
+        try:
+            dt = datetime.strptime(due_date, "%Y-%m-%d")
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            raise ValueError("Invalid date format, expected YYYY-MM-DD")
+
+    def add_task(self, description: str, priority: str = "medium",
+                 category: str = "", due_date: str = "") -> int:
+        """Add a new task. Returns new task id."""
+        # Normalize and validate due_date (raises ValueError on bad format)
+        normalized_due = self._normalize_due_date(due_date)
+        # Generate id robustly to avoid duplicates after deletions
+        new_id = max((t.get("id") or 0 for t in self.tasks), default=0) + 1
         task = {
-            "id": len(self.tasks) + 1,
+            "id": new_id,
             "description": description,
             "priority": priority,
             "status": "pending",
             "created_at": datetime.now().isoformat(),
             "completed_at": None,
-            "category": category,  # NEW: Category field for organizing tasks
-            "due_date": due_date   # NEW: Due date field for task deadlines
+            "category": category,
+            "due_date": normalized_due
         }
         self.tasks.append(task)
         self.save_tasks()
-        return task["id"]
+        return new_id
     
-    def list_tasks(self, status: Optional[str] = None):
-        """List all tasks, optionally filtered by status"""
-        filtered_tasks = self.tasks
-        if status:
-            filtered_tasks = [t for t in self.tasks if t["status"] == status]
-        
+def list_tasks(self, status: Optional[str] = None):
+        filtered_tasks = [t for t in self.tasks if status is None or t.get("status") == status]
         if not filtered_tasks:
             print("No tasks found.")
             return
-        
+            
         # ENHANCED: Added category and due date display in task listing
         print("\n" + "="*80)
         print(f"{'ID':<5} {'Status':<10} {'Priority':<10} {'Category':<12} {'Description':<30} {'Due Date'}")
         print("="*80)
         for task in filtered_tasks:
-            status_icon = "✓" if task["status"] == "completed" else "○"
+            status_icon = "✓" if task.get("status") == "completed" else "○"
             priority_icon = {
                 "high": "🔴",
                 "medium": "🟡",
                 "low": "🟢"
-            }.get(task["priority"], "⚪")
+            }.get(task.get("priority"), "⚪")
             category = task.get("category", "") or "-"
             due_date = task.get("due_date", "") or "-"
-            desc = task['description'][:28] + ".." if len(task['description']) > 28 else task['description']
-            print(f"{task['id']:<5} {status_icon} {task['status']:<8} {priority_icon} {task['priority']:<8} {category:<12} {desc:<30} {due_date}")
+            desc = task.get('description', "")
+            desc_display = (desc[:28] + "..") if len(desc) > 28 else desc
+            print(f"{task.get('id', ''):<5} {status_icon} {task.get('status',''):<8} {priority_icon} {task.get('priority',''):<8} {category:<12} {desc_display:<30} {due_date}")
         print("="*80 + "\n")
     
-    def complete_task(self, task_id: int) -> bool:
+def complete_task(self, task_id: int) -> bool:
         """Mark a task as completed"""
         for task in self.tasks:
-            if task["id"] == task_id:
+            if task.get("id") == task_id:
                 task["status"] = "completed"
                 task["completed_at"] = datetime.now().isoformat()
                 self.save_tasks()
                 return True
         return False
     
-    def delete_task(self, task_id: int) -> bool:
-        """Delete a task"""
+def delete_task(self, task_id: int) -> bool:
         for i, task in enumerate(self.tasks):
-            if task["id"] == task_id:
+            if task.get("id") == task_id:
                 del self.tasks[i]
                 self.save_tasks()
                 return True
         return False
     
-    def update_task(self, task_id: int, description: Optional[str] = None, 
+def update_task(self, task_id: int, description: Optional[str] = None, 
                    priority: Optional[str] = None, category: Optional[str] = None,
                    due_date: Optional[str] = None) -> bool:
-        """Update task description, priority, category, or due date"""
-        # NEW FEATURE: Extended update_task to support category and due_date updates
+        """Update task description, priority, category, or due date.
+        For category/due_date: pass None to leave unchanged, pass '' to clear the value.
+        ```
+        """
         for task in self.tasks:
-            if task["id"] == task_id:
+            if task.get("id") == task_id:
                 if description:
                     task["description"] = description
                 if priority:
                     task["priority"] = priority
-                if category is not None:  # NEW: Allow updating category (including empty string)
+                if category is not None:  # allow empty string to clear
                     task["category"] = category
-                if due_date is not None:  # NEW: Allow updating due date (including empty string)
+                if due_date is not None:  # allow empty string to clear
                     task["due_date"] = due_date
                 self.save_tasks()
                 return True
         return False
     
-    def search_tasks(self, keyword: str) -> List[Dict]:
+def search_tasks(self, keyword: str) -> List[Dict]:
         """NEW FEATURE: Search tasks by keyword in description or category"""
         keyword_lower = keyword.lower()
         return [task for task in self.tasks 
                 if keyword_lower in task.get("description", "").lower() or 
                    keyword_lower in task.get("category", "").lower()]
     
-    def get_statistics(self) -> Dict:
+def get_statistics(self) -> Dict:
         """NEW FEATURE: Get statistics about tasks"""
         total = len(self.tasks)
-        completed = len([t for t in self.tasks if t["status"] == "completed"])
-        pending = len([t for t in self.tasks if t["status"] == "pending"])
-        high_priority = len([t for t in self.tasks if t.get("priority") == "high" and t["status"] == "pending"])
+        completed = len([t for t in self.tasks if t.get("status") == "completed"])
+        pending = len([t for t in self.tasks if t.get("status") == "pending"])
+        high_priority = len([t for t in self.tasks if t.get("priority") == "high" and t.get("status") == "pending"])
         return {
             "total": total,
             "completed": completed,
@@ -143,54 +173,53 @@ class TaskManager:
             "high_priority_pending": high_priority
         }
     
-    def sort_tasks(self, sort_by: str = "id") -> List[Dict]:
+def sort_tasks(self, sort_by: str = "id") -> List[Dict]:
         """NEW FEATURE: Sort tasks by different criteria"""
         tasks_copy = self.tasks.copy()
         if sort_by == "priority":
             priority_order = {"high": 1, "medium": 2, "low": 3}
-            tasks_copy.sort(key=lambda x: (priority_order.get(x.get("priority", "medium"), 3), x["id"]))
+            tasks_copy.sort(key=lambda x: (priority_order.get(x.get("priority", "medium"), 3), x.get("id", 0)))
         elif sort_by == "date":
             tasks_copy.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         elif sort_by == "due_date":
-            tasks_copy.sort(key=lambda x: (x.get("due_date") or "9999-12-31", x["id"]))
+            tasks_copy.sort(key=lambda x: (x.get("due_date") or "9999-12-31", x.get("id", 0)))
         return tasks_copy
     
-    def list_tasks_by_category(self, category: str):
+def list_tasks_by_category(self, category: str):
         """NEW FEATURE: List all tasks in a specific category"""
         filtered_tasks = [t for t in self.tasks if t.get("category", "").lower() == category.lower()]
         if not filtered_tasks:
             print(f"No tasks found in category '{category}'.")
             return
         
-        print(f"\n" + "="*60)
+        print(f"\n" + "="*80)
         print(f"Tasks in category: {category}")
-        print("="*60)
-        print(f"{'ID':<5} {'Status':<10} {'Priority':<10} {'Description'}")
-        print("="*60)
+        print("="*80)
+        print(f"{'ID':<5} {'Status':<10} {'Priority':<10} {'Category':<12} {'Description':<30} {'Due Date'}")
+        print("="*80)
         for task in filtered_tasks:
-            status_icon = "✓" if task["status"] == "completed" else "○"
+            status_icon = "✓" if task.get("status") == "completed" else "○"
             priority_icon = {
                 "high": "🔴",
                 "medium": "🟡",
                 "low": "🟢"
-            }.get(task["priority"], "⚪")
-            due_date_str = f" (Due: {task.get('due_date', 'N/A')})" if task.get("due_date") else ""
-            print(f"{task['id']:<5} {status_icon} {task['status']:<8} {priority_icon} {task['priority']:<8} {task['description']}{due_date_str}")
-        print("="*60 + "\n")
+            }.get(task.get("priority"), "⚪")
+            due_date_str = f" (Due: {task.get('due_date')})" if task.get("due_date") else ""
+            category_display = task.get("category", "") or "-"
+            desc = task.get("description", "")
+            desc_display = (desc[:28] + "..") if len(desc) > 28 else desc
+            print(f"{task.get('id', ''):<5} {status_icon} {task.get('status',''):<8} {priority_icon} {task.get('priority',''):<8} {category_display:<12} {desc_display:<30} {task.get('due_date','')}")
+        print("="*80 + "\n")
 
 
 def main():
     """Main CLI interface"""
     manager = TaskManager()
-    
-    print("="*60)
-    print("Welcome to Task Manager!")
-    print("="*60)
-    
     while True:
-        print("\nOptions:")
+        print("\nTask Manager")
+        print("="*40)
         print("  1. Add task")
-        print("  2. List all tasks")
+        print("  2. List tasks")
         print("  3. List pending tasks")
         print("  4. List completed tasks")
         print("  5. Complete task")
@@ -214,8 +243,13 @@ def main():
                 priority = "medium"
             # NEW FEATURE: Added category and due date input when adding tasks
             category = input("Enter category (optional, press Enter to skip): ").strip()
-            due_date = input("Enter due date (YYYY-MM-DD format, optional, press Enter to skip): ").strip()
-            task_id = manager.add_task(description, priority, category, due_date)
+            due_date_in = input("Enter due date (YYYY-MM-DD format, optional, press Enter to skip): ").strip()
+            # validate due date
+            try:
+                task_id = manager.add_task(description, priority, category, due_date_in)
+            except ValueError as e:
+                print(f"Error: {e}. Task not added.")
+                continue
             print(f"✓ Task {task_id} added successfully!")
         
         elif choice == "2":
@@ -228,49 +262,69 @@ def main():
             manager.list_tasks(status="completed")
         
         elif choice == "5":
-            manager.list_tasks(status="pending")
             try:
                 task_id = int(input("Enter task ID to complete: ").strip())
-                if manager.complete_task(task_id):
-                    print(f"✓ Task {task_id} marked as completed!")
-                else:
-                    print(f"✗ Task {task_id} not found.")
             except ValueError:
                 print("Error: Please enter a valid task ID.")
+                continue
+            if manager.complete_task(task_id):
+                print(f"✓ Task {task_id} marked as completed!")
+            else:
+                print(f"✗ Task {task_id} not found.")
         
         elif choice == "6":
-            manager.list_tasks()
             try:
                 task_id = int(input("Enter task ID to update: ").strip())
-                description = input("Enter new description (press Enter to skip): ").strip()
-                priority = input("Enter new priority (high/medium/low, press Enter to skip): ").strip().lower()
-                if priority and priority not in ["high", "medium", "low"]:
-                    print("Error: Invalid priority. Update cancelled.")
-                    continue
-                # NEW FEATURE: Added category and due date update options
-                category = input("Enter new category (press Enter to skip): ").strip()
-                due_date = input("Enter new due date (YYYY-MM-DD, press Enter to skip): ").strip()
-                if manager.update_task(task_id, 
-                                       description if description else None,
-                                       priority if priority else None,
-                                       category if category else None,
-                                       due_date if due_date else None):
-                    print(f"✓ Task {task_id} updated successfully!")
-                else:
-                    print(f"✗ Task {task_id} not found.")
             except ValueError:
                 print("Error: Please enter a valid task ID.")
+                continue
+            description = input("Enter new description (press Enter to skip): ").strip()
+            priority = input("Enter new priority (high/medium/low, press Enter to skip): ").strip().lower()
+            if priority and priority not in ["high", "medium", "low"]:
+                print("Error: Invalid priority. Update cancelled.")
+                continue
+            # NEW FEATURE: Added category and due date update options
+            print("Enter new category (leave blank to keep current, '-' to clear):")
+            category_in = input("Category: ").strip()
+            print("Enter new due date (YYYY-MM-DD, leave blank to keep current, '-' to clear):")
+            due_date_in = input("Due date: ").strip()
+            # Interpret sentinel values:
+            if category_in == "":
+                category_arg = None
+            elif category_in == "-":
+                category_arg = ""
+            else:
+                category_arg = category_in
+            if due_date_in == "":
+                due_arg = None
+            elif due_date_in == "-":
+                due_arg = ""
+            else:
+                # validate date format before applying update
+                try:
+                    due_arg = manager._normalize_due_date(due_date_in)
+                except ValueError:
+                    print("Error: Invalid date format (use YYYY-MM-DD). Update cancelled.")
+                    continue
+            if manager.update_task(task_id, 
+                                   description if description else None,
+                                   priority if priority else None,
+                                   category_arg,
+                                   due_arg):
+                print(f"✓ Task {task_id} updated successfully!")
+            else:
+                print(f"✗ Task {task_id} not found.")
         
         elif choice == "7":
-            manager.list_tasks()
             try:
                 task_id = int(input("Enter task ID to delete: ").strip())
-                if manager.delete_task(task_id):
-                    print(f"✓ Task {task_id} deleted successfully!")
-                else:
-                    print(f"✗ Task {task_id} not found.")
             except ValueError:
                 print("Error: Please enter a valid task ID.")
+                continue
+            if manager.delete_task(task_id):
+                print(f"✓ Task {task_id} deleted.")
+            else:
+                print(f"✗ Task {task_id} not found.")
         
         elif choice == "8":
             # NEW FEATURE: Search tasks by keyword
@@ -285,14 +339,14 @@ def main():
                 print(f"{'ID':<5} {'Status':<10} {'Priority':<10} {'Category':<12} {'Description'}")
                 print("="*80)
                 for task in results:
-                    status_icon = "✓" if task["status"] == "completed" else "○"
+                    status_icon = "✓" if task.get("status") == "completed" else "○"
                     priority_icon = {
                         "high": "🔴",
                         "medium": "🟡",
                         "low": "🟢"
-                    }.get(task["priority"], "⚪")
+                    }.get(task.get("priority"), "⚪")
                     category = task.get("category", "") or "-"
-                    print(f"{task['id']:<5} {status_icon} {task['status']:<8} {priority_icon} {task['priority']:<8} {category:<12} {task['description']}")
+                    print(f"{task.get('id',''):<5} {status_icon} {task.get('status',''):<8} {priority_icon} {task.get('priority',''):<8} {category:<12} {task.get('description','')}")
                 print("="*80 + "\n")
             else:
                 print(f"No tasks found matching '{keyword}'.")
@@ -328,16 +382,17 @@ def main():
                 print(f"{'ID':<5} {'Status':<10} {'Priority':<10} {'Category':<12} {'Description':<30} {'Due Date'}")
                 print("="*80)
                 for task in sorted_tasks:
-                    status_icon = "✓" if task["status"] == "completed" else "○"
+                    status_icon = "✓" if task.get("status") == "completed" else "○"
                     priority_icon = {
                         "high": "🔴",
                         "medium": "🟡",
                         "low": "🟢"
-                    }.get(task["priority"], "⚪")
+                    }.get(task.get("priority"), "⚪")
                     category = task.get("category", "") or "-"
                     due_date = task.get("due_date", "") or "-"
-                    desc = task['description'][:28] + ".." if len(task['description']) > 28 else task['description']
-                    print(f"{task['id']:<5} {status_icon} {task['status']:<8} {priority_icon} {task['priority']:<8} {category:<12} {desc:<30} {due_date}")
+                    desc = task.get('description', "")
+                    desc_display = (desc[:28] + "..") if len(desc) > 28 else desc
+                    print(f"{task.get('id',''):<5} {status_icon} {task.get('status',''):<8} {priority_icon} {task.get('priority',''):<8} {category:<12} {desc_display:<30} {due_date}")
                 print("="*80 + "\n")
             else:
                 print("No tasks to sort.")
@@ -355,10 +410,6 @@ def main():
             print("Goodbye!")
             break
         
-        else:
-            print("Invalid choice. Please try again.")
-
-
+    
 if __name__ == "__main__":
     main()
-
